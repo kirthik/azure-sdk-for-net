@@ -1,7 +1,9 @@
 [CmdletBinding()]
 Param(
 [Parameter(Mandatory=$False, Position=0)]
-[string]$Folder
+[string]$Folder,
+[Parameter(Mandatory=$False, Position=1)]
+[bool]$Sync
 )
 
 $ErrorActionPreference = "Stop"
@@ -22,7 +24,6 @@ function SyncNuspecFile([string]$FolderPath)
         } else {
             [xml]$nuproj = Get-Content (Get-Item $FolderPath\*.nuget.proj | select -First 1)
         }
-
         $assemblyContent = Get-Content $FolderPath\Properties\AssemblyInfo.cs
         $currentContent = $assemblyContent | Out-String
 
@@ -34,9 +35,16 @@ function SyncNuspecFile([string]$FolderPath)
             Throw "Invalid package version from $nuproj"
         }
         $majorVersion = $tokens[0]
-        $assemblyFileVersion = "$packageVersion.0" 
+        $assemblyFileVersion = "$packageVersion.0"
         $assemblyContent = $assemblyContent -replace "\[assembly\:\s*AssemblyFileVersion\s*\(\s*`"[\d\.\s]+`"\s*\)\s*\]","[assembly: AssemblyFileVersion(`"$assemblyFileVersion`")]"
 
+        #Updating AssemblyVersion
+        $assemblyVersion = "$majorVersion.0.0.0"
+        if ($majorVersion -eq "0") {
+            $assemblyVersion = "0.9.0.0"
+        }
+       
+        $assemblyContent = $assemblyContent -replace "\[assembly\:\s*AssemblyVersion\s*\(\s*`"[\d\.\s]+","[assembly: AssemblyVersion(`"$assemblyVersion"       
         $newContent = $assemblyContent | Out-String
 
         if ($currentContent.CompareTo($newContent)  -ne 0) {
@@ -120,4 +128,60 @@ function SyncNuspecFile([string]$FolderPath)
     }
 }
 
-SyncNuspecFile $Folder
+function CheckNuspecFile([string] $FolderPath)
+{
+    Write-Debug "folder: $FolderPath"
+    echo "folder: $FolderPath"
+    
+    # Try checking Assembly
+    if((Test-Path -Path $FolderPath\*.nuget.proj) -and (Test-Path -Path $FolderPath\Properties\AssemblyInfo.cs)) { 
+        echo "Checking AssemblyInfo.cs"
+        $folderName = (Get-Item $FolderPath).Name
+        [xml]$nuproj = $null
+        if ($folderName -eq "Common") {
+            [xml]$nuproj = Get-Content (Get-Item $FolderPath\*.Common.nuget.proj)
+        } else {
+            [xml]$nuproj = Get-Content (Get-Item $FolderPath\*.nuget.proj | select -First 1)
+        }
+
+        $assemblyContent = Get-Content $FolderPath\Properties\AssemblyInfo.cs
+        $currentContent = $assemblyContent | Out-String
+
+        #Checking AssemblyFileVersion
+        $packageVersion = $nuproj.Project.ItemGroup.SdkNuGetPackage.PackageVersion
+        $packageVersion = ([regex]"[\d\.]+").Match($packageVersion).Value
+        $tokens = $packageVersion.split(".")
+        if ($tokens.Length -ne 3) {
+            Throw "Invalid package version from $nuproj"
+        }
+        $majorVersion = $tokens[0]
+        $assemblyFileVersion = "$packageVersion.0"
+
+        $assemblyFileVersionLine = $assemblyContent -match "\[assembly\:\s*AssemblyFileVersion\s*\(\s*`"[\d\.\s]+`"\s*\)\s*\]"
+        $actualAssemblyFileVersion = $assemblyFileVersionLine.Split("`"")[1]
+
+        if ($assemblyFileVersion -ne $actualAssemblyFileVersion)
+        {
+            Throw "Assembly File Versions between nuget project and AssemblyInfo don't match"
+        }
+
+        #Checking AssemblyVersion
+        $assemblyVersionLine = $assemblyContent -match "\[assembly\:\s*AssemblyVersion\s*\(\s*`"[\d\.\s]+"
+        $actualAssemblyMajorVersion = $assemblyVersionLine.Split("`"")[1].Split(".")[0];
+
+        if ($majorVersion -ne $actualAssemblyMajorVersion)
+        {
+            Throw "Assembly Versions between nuget project and AssemblyInfo don't match"
+        }
+
+    }
+}
+
+if ($Sync)
+{
+    SyncNuspecFile $Folder
+}
+else
+{
+    CheckNuspecFile $Folder
+}
